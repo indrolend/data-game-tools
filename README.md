@@ -7,10 +7,14 @@ External diagnostics, playtesting, capture, and tuning tools for [Data](https://
 ## Run the product contract
 
 ```powershell
-.\Invoke-DataGame.ps1 -GameRoot C:\path\to\data-game -Action test -Configuration Release
+.\Invoke-DataGame.ps1 -Action test -Configuration Release
 ```
+
+The Windows workstation defaults to `C:\Users\indro\Projects\data-game`. Pass
+`-GameRoot` only when deliberately testing another checkout.
 
 Supported actions are `status`, `configure`, `build`, `test`, and `smoke`. Build output and generated evidence stay under this repository's ignored `artifacts/` directory, leaving the product checkout clean. Each invocation reports the exact product commit and whether its checkout is dirty.
 
 Visual capture and richer evidence bundles should be added here as thin orchestration over explicit product/test interfaces. If a diagnostic needs copied gameplay logic to work, the product is missing a testable boundary; add that boundary to `data-game` instead of duplicating it here.
 
+See [AUTHORITY.md](AUTHORITY.md) before adding another repository, launcher, or orchestration layer.

@@ -1,7 +1,6 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$GameRoot,
+    [string]$GameRoot = "C:\Users\indro\Projects\data-game",
 
     [ValidateSet("status", "configure", "build", "test", "smoke")]
     [string]$Action = "status",
