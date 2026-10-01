@@ -8,8 +8,13 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
     [string]$Configuration = "Release",
 
-    [ValidateSet("enemy-obstruction")]
-    [string]$Scenario = "enemy-obstruction"
+    [ValidateSet("enemy-obstruction", "lighting-comparison", "soul-lifecycle")]
+    [string]$Scenario = "enemy-obstruction",
+
+    [Alias("LightingReplayState")]
+    [string]$LightingControlState,
+
+    [string[]]$LightingCommand
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,7 +99,15 @@ function Invoke-Evidence {
     $stdoutPath = Join-Path $bundle "stdout.log"
     $stderrPath = Join-Path $bundle "stderr.log"
 
-    & $executable --evidence-scenario $Scenario --evidence-output $bundle --capture-width 1280 --capture-height 720 1> $stdoutPath 2> $stderrPath
+    $evidenceArguments = @("--evidence-scenario", $Scenario, "--evidence-output", $bundle, "--capture-width", "1280", "--capture-height", "720")
+    if ($LightingControlState) {
+        $resolvedLightingState = (Resolve-Path -LiteralPath $LightingControlState).Path
+        $evidenceArguments += @("--lighting-control-state", $resolvedLightingState)
+    }
+    foreach ($command in $LightingCommand) {
+        $evidenceArguments += @("--lighting-command", $command)
+    }
+    & $executable @evidenceArguments 1> $stdoutPath 2> $stderrPath
     $nativeExit = $LASTEXITCODE
     if ($nativeExit -ne 0) { throw "Evidence scenario failed with exit code $nativeExit. Bundle retained at $bundle" }
 
@@ -142,6 +155,9 @@ function Invoke-Evidence {
         assertions = "assertions.json"
         video = "evidence.mp4"
         video_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $videoPath).Hash.ToLowerInvariant()
+    }
+    if ($manifest.PSObject.Properties.Name -contains "lighting_control") {
+        $result["lighting_control"] = $manifest.lighting_control
     }
     $resultPath = Join-Path $bundle "result.json"
     $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
