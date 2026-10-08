@@ -14,7 +14,9 @@ param(
     [Alias("LightingReplayState")]
     [string]$LightingControlState,
 
-    [string[]]$LightingCommand
+    [string[]]$LightingCommand,
+
+    [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
@@ -90,9 +92,42 @@ function Get-DataExecutable {
     $executable
 }
 
-function Invoke-Evidence {
-    Invoke-Build
-    $executable = Get-DataExecutable
+function Get-ExecutableBuildIdentity {
+    param([string]$ExePath)
+    
+    # Extract version info from DigitalBreakdown.exe
+    # This is a simple hash-based approach; the game can embed its build commit in BuildIdentity.cpp
+    $fileInfo = Get-Item -LiteralPath $ExePath
+    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ExePath).Hash.ToLowerInvariant()
+    return @{
+        path = $ExePath
+        size = $fileInfo.Length
+        modified = $fileInfo.LastWriteTimeUtc
+        sha256 = $hash
+    }
+}
+
+function Invoke-EvidenceWithExecutable {
+    param(
+        [string]$ExecutablePath,
+        [string]$ExpectedRevision
+    )
+
+    if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
+        throw "Specified executable does not exist: $ExecutablePath"
+    }
+
+    # Validate that the executable is from the expected source revision
+    # For now, we trust the build root path contains the correct revision.
+    # A more robust approach would embed the commit SHA in the binary itself.
+    if (-not $ExecutablePath.Contains($ExpectedRevision)) {
+        Write-Host "WARNING: Executable path does not contain expected revision $ExpectedRevision" -ForegroundColor Yellow
+        Write-Host "Executable: $ExecutablePath" -ForegroundColor Yellow
+        Write-Host "Proceeding anyway, but results may be unreliable." -ForegroundColor Yellow
+    }
+
+    $buildIdentity = Get-ExecutableBuildIdentity -ExePath $ExecutablePath
+    
     $runId = "{0}-{1}{2}" -f (Get-Date -Format "yyyyMMdd-HHmmss"), $revision, $(if ($dirty) { "-dirty" } else { "" })
     $bundle = Join-Path $artifactRoot "evidence\$Scenario\$runId"
     New-Item -ItemType Directory -Path $bundle -Force | Out-Null
@@ -107,7 +142,7 @@ function Invoke-Evidence {
     foreach ($command in $LightingCommand) {
         $evidenceArguments += @("--lighting-command", $command)
     }
-    & $executable @evidenceArguments 1> $stdoutPath 2> $stderrPath
+    & $ExecutablePath @evidenceArguments 1> $stdoutPath 2> $stderrPath
     $nativeExit = $LASTEXITCODE
     if ($nativeExit -ne 0) { throw "Evidence scenario failed with exit code $nativeExit. Bundle retained at $bundle" }
 
@@ -155,6 +190,9 @@ function Invoke-Evidence {
         assertions = "assertions.json"
         video = "evidence.mp4"
         video_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $videoPath).Hash.ToLowerInvariant()
+        executable_sha256 = $buildIdentity.sha256
+        executable_size = $buildIdentity.size
+        executable_modified = $buildIdentity.modified
     }
     if ($manifest.PSObject.Properties.Name -contains "lighting_control") {
         $result["lighting_control"] = $manifest.lighting_control
@@ -163,6 +201,12 @@ function Invoke-Evidence {
     $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
     Write-Host "EVIDENCE_OK bundle=$bundle result=$resultPath video=$videoPath" -ForegroundColor Green
     $result | ConvertTo-Json -Depth 5
+}
+
+function Invoke-Evidence {
+    Invoke-Build
+    $executable = Get-DataExecutable
+    Invoke-EvidenceWithExecutable -ExecutablePath $executable -ExpectedRevision $revision
 }
 
 switch ($Action) {
@@ -177,11 +221,24 @@ switch ($Action) {
         Invoke-Checked ctest --test-dir $buildRoot -C $Configuration --output-on-failure
     }
     "smoke" {
-        Invoke-Build
-        $executable = Get-DataExecutable
+        if ($SkipBuild) {
+            $executable = Get-DataExecutable
+        } else {
+            Invoke-Build
+            $executable = Get-DataExecutable
+        }
         Invoke-Checked $executable --smoke-test
     }
     "evidence" {
-        Invoke-Evidence
+        if ($SkipBuild) {
+            $executable = Get-DataExecutable
+            if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+                throw "No existing executable found for skip-build. Run with -Action build first, or omit -SkipBuild."
+            }
+            Write-Host "Reusing existing executable: $executable" -ForegroundColor Cyan
+            Invoke-EvidenceWithExecutable -ExecutablePath $executable -ExpectedRevision $revision
+        } else {
+            Invoke-Evidence
+        }
     }
 }
