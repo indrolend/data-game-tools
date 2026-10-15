@@ -40,11 +40,15 @@ if ($LASTEXITCODE -ne 0) {
 $dirty = -not [string]::IsNullOrWhiteSpace($status)
 $revision = $commit.Substring(0, 12)
 $artifactRoot = Join-Path $PSScriptRoot "artifacts"
-$buildRoot = Join-Path $artifactRoot "build\$revision-$Configuration"
+$sourcePathBytes = [Text.Encoding]::UTF8.GetBytes($resolvedGameRoot.ToLowerInvariant())
+$sourcePathHash = [Security.Cryptography.SHA256]::HashData($sourcePathBytes)
+$sourceKey = -join ($sourcePathHash[0..3] | ForEach-Object { $_.ToString("x2") })
+$buildRoot = Join-Path $artifactRoot "build\$revision-$sourceKey-$Configuration"
 
 Write-Host "Data source: $resolvedGameRoot"
 Write-Host "Revision:    $commit"
 Write-Host "Dirty:       $dirty"
+Write-Host "Source key:  $sourceKey"
 Write-Host "Artifacts:   $artifactRoot"
 
 if ($Action -eq "status") {

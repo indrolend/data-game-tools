@@ -15,6 +15,30 @@ The Windows workstation defaults to `C:\Users\indro\Projects\data-game`. Pass
 
 Supported actions are `status`, `configure`, `build`, `test`, `smoke`, and `evidence`. Build output and generated evidence stay under this repository's ignored `artifacts/` directory, leaving the product checkout clean. Each invocation reports the exact product commit and whether its checkout is dirty.
 
+Build directories include a short hash of the resolved source checkout path in
+addition to commit and configuration. This prevents separate worktrees at the
+same commit—especially dirty experimental worktrees—from silently sharing a
+CMake cache or executable.
+
+## SSH-first command surface
+
+`Dev.ps1` is a thin, noninteractive entry point over the existing Git,
+CommandHUD, and `Invoke-DataGame.ps1` authorities. It works in a local
+PowerShell terminal and in an SSH PowerShell session without requiring a
+browser, tunnel, MCP server, or full-screen interface.
+
+```powershell
+.\Dev.ps1 status
+.\Dev.ps1 doctor
+.\Dev.ps1 worktrees
+.\Dev.ps1 build
+.\Dev.ps1 tests
+.\Dev.ps1 evidence -Scenario enemy-obstruction
+```
+
+Use `-Json` with read-only inspection commands when a compact machine-readable
+result is preferable on a remote client.
+
 ```powershell
 .\Invoke-DataGame.ps1 -Action evidence -Scenario enemy-obstruction
 ```
