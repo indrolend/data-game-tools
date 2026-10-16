@@ -21,6 +21,20 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Get-Sha256Hex {
+    param([Parameter(Mandatory = $true)][string]$LiteralPath)
+
+    $stream = [IO.File]::OpenRead($LiteralPath)
+    $hasher = [Security.Cryptography.SHA256]::Create()
+    try {
+        return -join ($hasher.ComputeHash($stream) | ForEach-Object { $_.ToString("x2") })
+    }
+    finally {
+        $hasher.Dispose()
+        $stream.Dispose()
+    }
+}
+
 $resolvedGameRoot = (Resolve-Path -LiteralPath $GameRoot).Path
 $cmakeFile = Join-Path $resolvedGameRoot "CMakeLists.txt"
 if (-not (Test-Path -LiteralPath $cmakeFile -PathType Leaf)) {
@@ -41,7 +55,13 @@ $dirty = -not [string]::IsNullOrWhiteSpace($status)
 $revision = $commit.Substring(0, 12)
 $artifactRoot = Join-Path $PSScriptRoot "artifacts"
 $sourcePathBytes = [Text.Encoding]::UTF8.GetBytes($resolvedGameRoot.ToLowerInvariant())
-$sourcePathHash = [Security.Cryptography.SHA256]::HashData($sourcePathBytes)
+$sourcePathHasher = [Security.Cryptography.SHA256]::Create()
+try {
+    $sourcePathHash = $sourcePathHasher.ComputeHash($sourcePathBytes)
+}
+finally {
+    $sourcePathHasher.Dispose()
+}
 $sourceKey = -join ($sourcePathHash[0..3] | ForEach-Object { $_.ToString("x2") })
 $buildRoot = Join-Path $artifactRoot "build\$revision-$sourceKey-$Configuration"
 
@@ -102,7 +122,7 @@ function Get-ExecutableBuildIdentity {
     # Extract version info from DigitalBreakdown.exe
     # This is a simple hash-based approach; the game can embed its build commit in BuildIdentity.cpp
     $fileInfo = Get-Item -LiteralPath $ExePath
-    $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $ExePath).Hash.ToLowerInvariant()
+    $hash = Get-Sha256Hex -LiteralPath $ExePath
     return @{
         path = $ExePath
         size = $fileInfo.Length
@@ -193,7 +213,7 @@ function Invoke-EvidenceWithExecutable {
         events = "events.ndjson"
         assertions = "assertions.json"
         video = "evidence.mp4"
-        video_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $videoPath).Hash.ToLowerInvariant()
+        video_sha256 = Get-Sha256Hex -LiteralPath $videoPath
         executable_sha256 = $buildIdentity.sha256
         executable_size = $buildIdentity.size
         executable_modified = $buildIdentity.modified
@@ -213,9 +233,10 @@ function Invoke-EvidenceWithExecutable {
         $result["comparison"] = $manifest.comparison
     }
     $resultPath = Join-Path $bundle "result.json"
-    $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
+    $resultJson = $result | ConvertTo-Json -Depth 5
+    [IO.File]::WriteAllText($resultPath, $resultJson, (New-Object Text.UTF8Encoding($false)))
     Write-Host "EVIDENCE_OK bundle=$bundle result=$resultPath video=$videoPath" -ForegroundColor Green
-    $result | ConvertTo-Json -Depth 5
+    $resultJson
 }
 
 function Invoke-Evidence {
