@@ -8,7 +8,7 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
     [string]$Configuration = "Release",
 
-    [ValidateSet("enemy-obstruction", "lighting-comparison", "soul-lifecycle")]
+    [ValidateSet("enemy-obstruction", "lighting-comparison", "soul-lifecycle", "bigbang-capture")]
     [string]$Scenario = "enemy-obstruction",
 
     [Alias("LightingReplayState")]
@@ -200,6 +200,14 @@ function Invoke-EvidenceWithExecutable {
     }
     if ($manifest.PSObject.Properties.Name -contains "lighting_control") {
         $result["lighting_control"] = $manifest.lighting_control
+    }
+    if ($manifest.PSObject.Properties.Name -contains "input_log") {
+        $result["input_log"] = $manifest.input_log
+    }
+    foreach ($field in @("capture_tick", "changed_input_tick", "first_divergence_tick")) {
+        if ($manifest.PSObject.Properties.Name -contains $field) {
+            $result[$field] = $manifest.$field
+        }
     }
     $resultPath = Join-Path $bundle "result.json"
     $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
