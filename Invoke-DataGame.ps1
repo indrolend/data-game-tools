@@ -209,6 +209,9 @@ function Invoke-EvidenceWithExecutable {
             $result[$field] = $manifest.$field
         }
     }
+    if ($manifest.PSObject.Properties.Name -contains "comparison") {
+        $result["comparison"] = $manifest.comparison
+    }
     $resultPath = Join-Path $bundle "result.json"
     $result | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
     Write-Host "EVIDENCE_OK bundle=$bundle result=$resultPath video=$videoPath" -ForegroundColor Green
