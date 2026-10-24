@@ -2,7 +2,7 @@
 param(
     [string]$GameRoot = "C:\Users\indro\Projects\data-game",
 
-    [ValidateSet("status", "configure", "build", "test", "smoke", "evidence")]
+    [ValidateSet("status", "configure", "build", "test", "smoke", "evidence", "godot-build", "godot-test")]
     [string]$Action = "status",
 
     [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
@@ -16,12 +16,19 @@ param(
 
     [string[]]$LightingCommand,
 
+    [string]$GodotExe = "godot_console.exe",
+
+    [string]$GodotCppDirectory,
+
     [switch]$SkipBuild
 )
 
 $ErrorActionPreference = "Stop"
 
 $resolvedGameRoot = (Resolve-Path -LiteralPath $GameRoot).Path
+if (-not $GodotCppDirectory) {
+    $GodotCppDirectory = Join-Path (Split-Path $resolvedGameRoot -Parent) "godot-cpp"
+}
 $cmakeFile = Join-Path $resolvedGameRoot "CMakeLists.txt"
 if (-not (Test-Path -LiteralPath $cmakeFile -PathType Leaf)) {
     throw "GameRoot is not a Data source checkout: $resolvedGameRoot"
@@ -44,6 +51,7 @@ $sourcePathBytes = [Text.Encoding]::UTF8.GetBytes($resolvedGameRoot.ToLowerInvar
 $sourcePathHash = [Security.Cryptography.SHA256]::HashData($sourcePathBytes)
 $sourceKey = -join ($sourcePathHash[0..3] | ForEach-Object { $_.ToString("x2") })
 $buildRoot = Join-Path $artifactRoot "build\$revision-$sourceKey-$Configuration"
+$godotBuildRoot = Join-Path $artifactRoot "build\godot-$revision-$sourceKey-$Configuration"
 
 Write-Host "Data source: $resolvedGameRoot"
 Write-Host "Revision:    $commit"
@@ -80,6 +88,42 @@ function Invoke-Configure {
 function Invoke-Build {
     Invoke-Configure
     Invoke-Checked cmake --build $buildRoot --config $Configuration
+}
+
+function Invoke-GodotBuild {
+    if (-not (Test-Path -LiteralPath $GodotCppDirectory -PathType Container)) {
+        throw "GodotCppDirectory does not exist: $GodotCppDirectory"
+    }
+    New-Item -ItemType Directory -Force -Path $godotBuildRoot | Out-Null
+    Invoke-Checked cmake -S $resolvedGameRoot -B $godotBuildRoot `
+        "-DDB_BUILD_GODOT_PRESENTATION=ON" `
+        "-DGODOT_CPP_DIR=$GodotCppDirectory" `
+        "-DGODOTCPP_DEFAULT_API_VERSION=4.7"
+    Invoke-Checked cmake --build $godotBuildRoot --config $Configuration `
+        --target DigitalBreakdownGodot --parallel
+}
+
+function Invoke-GodotTests {
+    Invoke-GodotBuild
+    $godotProject = Join-Path $resolvedGameRoot "godot"
+    Invoke-Checked $GodotExe --headless --editor --path $godotProject --quit
+    $contractScripts = @(
+        "parent_smoke", "phone_presentation", "music_presentation", "menu_navigation",
+        "restart_menu", "room_presentation", "field_island_traversal", "gameplay_loop",
+        "all_room_gameplay_loops", "agent_playtest_hardening", "projectile_observation",
+        "damage_probe", "diagnostic_utilities", "human_model_presentation",
+        "hud_presentation", "lighting_presentation", "upgrade_presentation", "room_transition"
+    )
+    foreach ($contract in $contractScripts) {
+        $output = @(& $GodotExe --headless --path $godotProject --script "res://tests/$contract.gd" 2>&1)
+        $exitCode = $LASTEXITCODE
+        $output | Write-Host
+        if ($exitCode -ne 0) { throw "Godot contract '$contract' failed with exit code $exitCode." }
+        if ($output | Select-String -Pattern "SCRIPT ERROR|ERROR:|FAIL:" -Quiet) {
+            throw "Godot contract '$contract' emitted an error despite a zero exit code."
+        }
+    }
+    Write-Host "GODOT_TESTS_OK contracts=$($contractScripts.Count)" -ForegroundColor Green
 }
 
 function Get-DataExecutable {
@@ -245,4 +289,6 @@ switch ($Action) {
             Invoke-Evidence
         }
     }
+    "godot-build" { Invoke-GodotBuild }
+    "godot-test" { Invoke-GodotTests }
 }

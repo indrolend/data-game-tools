@@ -33,6 +33,8 @@ browser, tunnel, MCP server, or full-screen interface.
 .\Dev.ps1 worktrees
 .\Dev.ps1 build
 .\Dev.ps1 tests
+.\Dev.ps1 godot-build
+.\Dev.ps1 godot-test
 .\Dev.ps1 evidence -Scenario enemy-obstruction
 ```
 

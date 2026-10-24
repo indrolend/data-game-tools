@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("help", "status", "projects", "project", "git", "worktrees", "tests", "build", "evidence", "agents", "doctor")]
+    [ValidateSet("help", "status", "projects", "project", "git", "worktrees", "tests", "build", "godot-build", "godot-test", "evidence", "agents", "doctor")]
     [string]$Action = "help",
 
     [Parameter(Position = 1)]
@@ -14,6 +14,10 @@ param(
     [string]$Scenario = "enemy-obstruction",
 
     [string]$GameRoot = "C:\Users\indro\Projects\data-game",
+
+    [string]$GodotExe = "godot_console.exe",
+
+    [string]$GodotCppDirectory,
 
     [switch]$Json
 )
@@ -112,6 +116,8 @@ dev worktrees              registered worktrees and dirty state
 dev tests                  build and run product tests
 dev build                  build the product
 dev evidence               build and capture deterministic evidence
+dev godot-build            build the native-authoritative Godot client
+dev godot-test             build, import, and run all Godot contracts
 dev agents                 available trusted agent runners
 dev doctor                 SSH-safe workstation readiness
 
@@ -136,6 +142,8 @@ Options: -Configuration Release -Scenario enemy-obstruction -Json
     }
     "tests" { & $dataGameCommand -GameRoot $GameRoot -Action test -Configuration $Configuration; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
     "build" { & $dataGameCommand -GameRoot $GameRoot -Action build -Configuration $Configuration; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+    "godot-build" { & $dataGameCommand -GameRoot $GameRoot -Action godot-build -Configuration $Configuration -GodotExe $GodotExe -GodotCppDirectory $GodotCppDirectory; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+    "godot-test" { & $dataGameCommand -GameRoot $GameRoot -Action godot-test -Configuration $Configuration -GodotExe $GodotExe -GodotCppDirectory $GodotCppDirectory; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
     "evidence" { & $dataGameCommand -GameRoot $GameRoot -Action evidence -Configuration $Configuration -Scenario $Scenario; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
     "agents" { & commandhud agents $(if ($Json) { "--json" }) }
     "doctor" { Write-Doctor }
