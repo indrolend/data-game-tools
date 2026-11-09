@@ -52,4 +52,15 @@ manifest, telemetry, event frames, assertions, logs, and video.
 
 Visual capture and richer evidence bundles should be added here as thin orchestration over explicit product/test interfaces. If a diagnostic needs copied gameplay logic to work, the product is missing a testable boundary; add that boundary to `data-game` instead of duplicating it here.
 
+To maintain stable pointers to the newest generated image and video while an
+evidence workflow is running, start the repository-local watcher in another
+PowerShell session:
+
+```powershell
+.\scripts\Watch-LatestGameEvidence.ps1
+```
+
+It atomically updates ignored `artifacts/evidence/latest.png` and `latest.mp4`.
+Use `-EvidenceRoot <path>` only when watching another explicit evidence root.
+
 See [AUTHORITY.md](AUTHORITY.md) before adding another repository, launcher, or orchestration layer.
