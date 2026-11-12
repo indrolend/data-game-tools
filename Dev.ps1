@@ -10,7 +10,7 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo", "MinSizeRel")]
     [string]$Configuration = "Release",
 
-    [ValidateSet("enemy-obstruction", "lighting-comparison", "soul-lifecycle")]
+    [ValidateSet("enemy-obstruction", "lighting-comparison", "soul-lifecycle", "shadow-stability")]
     [string]$Scenario = "enemy-obstruction",
 
     [string]$GameRoot = "C:\Users\indro\Projects\data-game",
