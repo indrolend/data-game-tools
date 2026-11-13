@@ -56,6 +56,24 @@ manifest, telemetry, event frames, assertions, logs, and video.
 
 Visual capture and richer evidence bundles should be added here as thin orchestration over explicit product/test interfaces. If a diagnostic needs copied gameplay logic to work, the product is missing a testable boundary; add that boundary to `data-game` instead of duplicating it here.
 
+## Bounded autonomous playtest
+
+`scripts/Invoke-AgentPlaytest.ps1` drives the product-owned schema-3 agent
+protocol without copying simulation rules. Its `combat-cycle` goal adaptively
+orients, approaches, attacks, and captures one soul while enforcing action and
+battery budgets. Every observation frame, command, state transition, executable
+hash, and final verdict is retained in a unique ignored evidence bundle.
+
+```powershell
+.\scripts\Invoke-AgentPlaytest.ps1 `
+  -ExecutablePath C:\path\to\DigitalBreakdown.exe `
+  -RoomSeed 7 -RoomIndex 12 -Goal combat-cycle
+```
+
+Use `-Goal observe` as a cheap protocol/build/room identity check. A failed
+survival floor or exhausted action budget is a playtest failure, not an excuse
+for the runner to mutate authoritative state or grant itself resources.
+
 To maintain stable pointers to the newest generated image and video while an
 evidence workflow is running, start the repository-local watcher in another
 PowerShell session:
