@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("help", "status", "projects", "project", "git", "worktrees", "tests", "build", "godot-build", "godot-test", "evidence", "agents", "doctor")]
+    [ValidateSet("help", "status", "projects", "project", "git", "worktrees", "tests", "build", "godot-build", "godot-test", "evidence", "agent-playtest", "agents", "doctor")]
     [string]$Action = "help",
 
     [Parameter(Position = 1)]
@@ -18,6 +18,8 @@ param(
     [string]$GodotExe = "godot_console.exe",
 
     [string]$GodotCppDirectory,
+
+    [string]$ExecutablePath,
 
     [switch]$Json
 )
@@ -116,6 +118,7 @@ dev worktrees              registered worktrees and dirty state
 dev tests                  build and run product tests
 dev build                  build the product
 dev evidence               build and capture deterministic evidence
+dev agent-playtest         run one bounded autonomous combat/capture cycle
 dev godot-build            build the native-authoritative Godot client
 dev godot-test             build, import, and run all Godot contracts
 dev agents                 available trusted agent runners
@@ -145,6 +148,11 @@ Options: -Configuration Release -Scenario enemy-obstruction -Json
     "godot-build" { & $dataGameCommand -GameRoot $GameRoot -Action godot-build -Configuration $Configuration -GodotExe $GodotExe -GodotCppDirectory $GodotCppDirectory; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
     "godot-test" { & $dataGameCommand -GameRoot $GameRoot -Action godot-test -Configuration $Configuration -GodotExe $GodotExe -GodotCppDirectory $GodotCppDirectory; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
     "evidence" { & $dataGameCommand -GameRoot $GameRoot -Action evidence -Configuration $Configuration -Scenario $Scenario; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+    "agent-playtest" {
+        if (-not $ExecutablePath) { throw "agent-playtest requires -ExecutablePath to preserve exact runtime identity." }
+        & (Join-Path $toolRoot "scripts\Invoke-AgentPlaytest.ps1") -ExecutablePath $ExecutablePath
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
     "agents" { & commandhud agents $(if ($Json) { "--json" }) }
     "doctor" { Write-Doctor }
 }
