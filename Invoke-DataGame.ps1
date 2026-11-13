@@ -263,8 +263,8 @@ function Invoke-ShadowStabilityEvidence {
     param([Parameter(Mandatory=$true)][string]$ExePath)
     if(-not(Test-Path -LiteralPath $ExePath -PathType Leaf)){throw "Specified executable does not exist: $ExePath"}
     $runId="{0}-{1}{2}" -f (Get-Date -Format "yyyyMMdd-HHmmss"),$revision,$(if($dirty){"-dirty"}else{""})
-    $bundle=Join-Path $artifactRoot "evidence\shadow-stability\$runId";$frames=Join-Path $bundle 'frames';$contacts=Join-Path $bundle 'contacts';$logs=Join-Path $bundle 'logs'
-    New-Item -ItemType Directory -Force -Path $frames,$contacts,$logs|Out-Null
+    $bundle=Join-Path $artifactRoot "evidence\shadow-stability\$runId";$frames=Join-Path $bundle 'frames';$contacts=Join-Path $bundle 'contacts';$logs=Join-Path $bundle 'logs';$rotations=Join-Path $bundle 'rotation'
+    New-Item -ItemType Directory -Force -Path $frames,$contacts,$logs,$rotations|Out-Null
     $smoke=@(& $ExePath --room-inspector-smoke --capture-width 320 --capture-height 180 2>&1);$smokeExit=$LASTEXITCODE;$smoke|Set-Content -LiteralPath (Join-Path $logs 'room-inspector-smoke.log') -Encoding utf8NoBOM
     if($smokeExit-ne0){throw "Room inspector smoke failed with exit code $smokeExit. Bundle retained at $bundle"}
     $premises=@();foreach($line in $smoke){if([string]$line-match'^ROOM_REVIEW premise=(\S+) seed=(\d+) room=(\d+) rating=KEEP '){$premises+=[pscustomobject]@{name=$Matches[1].ToLowerInvariant().Replace('_','-');seed=[int]$Matches[2];room=[int]$Matches[3]}}}
@@ -288,12 +288,28 @@ function Invoke-ShadowStabilityEvidence {
         $contact=Join-Path $contacts "$($premise.name).png";& $ffmpeg.Source -hide_banner -loglevel error -y @inputs -filter_complex '[0:v][1:v][2:v][3:v]hstack=inputs=4' $contact
         if($LASTEXITCODE-ne0){$failures.Add("$($premise.name):contact-sheet")}
     }
+    $rotationRecords=[Collections.Generic.List[object]]::new();$rotationDigests=[Collections.Generic.HashSet[string]]::new();$rotationFrameCount=0;$rotationPremise=$premises|Where-Object name -eq 'field-open'|Select-Object -First 1
+    foreach($mode in $modes){
+        $rotationBundle=Join-Path $rotations $mode;$rotationLog=Join-Path $logs "rotation-$mode.log"
+        $rotationArgs=@('--evidence-scenario','shadow-rotation','--evidence-output',$rotationBundle,'--capture-room-seed',[string]$rotationPremise.seed,'--capture-room-index',[string]$rotationPremise.room,'--capture-width','640','--capture-height','360','--shadow-command',"shadow mode $mode")
+        $rotationOutput=@(& $ExePath @rotationArgs 2>&1);$rotationExit=$LASTEXITCODE;$rotationOutput|Set-Content -LiteralPath $rotationLog -Encoding utf8NoBOM
+        $rotationManifestPath=Join-Path $rotationBundle 'manifest.json';$rotationManifest=if(Test-Path -LiteralPath $rotationManifestPath){Get-Content -LiteralPath $rotationManifestPath -Raw|ConvertFrom-Json}else{$null}
+        $observation=[string]($rotationOutput|Where-Object{[string]$_ -like 'CAPABILITY_OBSERVATION *'}|Select-Object -First 1);$requested='';$effective='';$observed=-1
+        if($observation-match'requested=(\S+)'){$requested=$Matches[1]};if($observation-match'effective=(\S+)'){$effective=$Matches[1]};if($observation-match'observed=(\d+)'){$observed=[int]$Matches[1]}
+        if($rotationManifest){[void]$rotationDigests.Add([string]$rotationManifest.authoritative_digest)}
+        if($rotationManifest){$rotationFrameCount+=[int]$rotationManifest.frames}
+        $rotationPassed=$rotationExit-eq0-and$rotationManifest-and$rotationManifest.classification-eq'pass'-and$rotationManifest.projection_stable
+        if(-not$rotationPassed){$failures.Add("rotation:$mode exit=$rotationExit requested=$requested effective=$effective")}
+        $video=Join-Path $rotations "$mode.mp4";if($rotationManifest){$pattern=Join-Path $rotationBundle 'frames\video\frame-%04d.ppm';& $ffmpeg.Source -hide_banner -loglevel error -y -framerate 10 -i $pattern -c:v libx264 -pix_fmt yuv420p -movflags +faststart $video;if($LASTEXITCODE-ne0){$failures.Add("rotation:$mode:video")}}
+        $rotationRecords.Add([ordered]@{mode=$mode;requested=$requested;effective=$effective;observed=$observed;passed=$rotationPassed;frames=$(if($rotationManifest){$rotationManifest.frames}else{0});projection_stable=$(if($rotationManifest){$rotationManifest.projection_stable}else{$false});authoritative_digest=$(if($rotationManifest){$rotationManifest.authoritative_digest}else{$null});render_average_ms=$(if($rotationManifest){$rotationManifest.render_average_ms}else{$null});render_maximum_ms=$(if($rotationManifest){$rotationManifest.render_maximum_ms}else{$null});manifest="rotation/$mode/manifest.json";timeline="rotation/$mode/timeline.ndjson";video="rotation/$mode.mp4";log="logs/rotation-$mode.log"})
+    }
+    if($rotationDigests.Count-ne1){$failures.Add("rotation:authoritative-digest-count=$($rotationDigests.Count)")}
     $identity=Get-ExecutableBuildIdentity $ExePath;$passed=$failures.Count-eq0
-    $manifest=[ordered]@{schema_version=1;scenario='shadow-stability';classification=$(if($passed){'PASS'}else{'FAIL'});game_commit=$commit;game_dirty=$dirty;configuration=$Configuration;executable=$identity;premises=$premises;modes=$modes;captures=$records.ToArray();failures=$failures.ToArray()}
+    $manifest=[ordered]@{schema_version=2;scenario='shadow-stability';classification=$(if($passed){'PASS'}else{'FAIL'});game_commit=$commit;game_dirty=$dirty;configuration=$Configuration;executable=$identity;premises=$premises;modes=$modes;captures=$records.ToArray();camera_rotation=$rotationRecords.ToArray();failures=$failures.ToArray()}
     $manifestPath=Join-Path $bundle 'manifest.json';$manifest|ConvertTo-Json -Depth 8|Set-Content -LiteralPath $manifestPath -Encoding utf8NoBOM
     $files=@(Get-ChildItem -LiteralPath $bundle -File -Recurse|Where-Object Name -ne 'sha256-manifest.json'|Sort-Object FullName);$hashes=@($files|ForEach-Object{[ordered]@{path=[IO.Path]::GetRelativePath($bundle,$_.FullName).Replace('\','/');bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}});$hashes|ConvertTo-Json -Depth 4|Set-Content -LiteralPath (Join-Path $bundle 'sha256-manifest.json') -Encoding utf8NoBOM
-    $result=[ordered]@{schema_version=1;scenario='shadow-stability';passed=$passed;premises=$premises.Count;modes=$modes.Count;captures=$records.Count;failures=$failures.Count;manifest='manifest.json';hash_manifest='sha256-manifest.json';representatives='contacts';executable_sha256=$identity.sha256};$resultPath=Join-Path $bundle 'result.json';$result|ConvertTo-Json|Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
-    Write-Host "SHADOW_CAPTURE_MATRIX=$(if($passed){'PASS'}else{'FAIL'}) premises=$($premises.Count) modes=$($modes.Count) captures=$($records.Count)";Write-Host "SHADOW_PATH_ISOLATION=$(if($passed){'PASS'}else{'FAIL'}) failures=$($failures.Count)";Write-Host "EVIDENCE_OK bundle=$bundle result=$resultPath"
+    $result=[ordered]@{schema_version=2;scenario='shadow-stability';passed=$passed;premises=$premises.Count;modes=$modes.Count;captures=$records.Count;rotation_frames=$rotationFrameCount;authoritative_digests=$rotationDigests.Count;failures=$failures.Count;manifest='manifest.json';hash_manifest='sha256-manifest.json';representatives='contacts';executable_sha256=$identity.sha256};$resultPath=Join-Path $bundle 'result.json';$result|ConvertTo-Json|Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
+    Write-Host "SHADOW_CAPTURE_MATRIX=$(if($passed){'PASS'}else{'FAIL'}) premises=$($premises.Count) modes=$($modes.Count) captures=$($records.Count)";Write-Host "SHADOW_PATH_ISOLATION=$(if($passed){'PASS'}else{'FAIL'}) failures=$($failures.Count)";Write-Host "CAMERA_SHADOW_STABILITY=$(if($passed){'PASS'}else{'FAIL'}) modes=$($modes.Count) frames=$rotationFrameCount authoritative_digests=$($rotationDigests.Count)";Write-Host "CAPABILITY_PROOF=$(if($passed){'PASS'}else{'FAIL'}) dimensions=requested,effective,observed,cost";Write-Host "EVIDENCE_OK bundle=$bundle result=$resultPath"
     if(-not$passed){throw "Shadow stability evidence failed. Bundle retained at $bundle"};$result|ConvertTo-Json
 }
 
