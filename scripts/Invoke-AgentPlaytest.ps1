@@ -11,6 +11,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $exe = (Resolve-Path -LiteralPath $ExecutablePath).Path
+$identity = (& $exe --build-identity-json | Out-String | ConvertFrom-Json)
+if ($LASTEXITCODE -ne 0 -or -not $identity.commit) { throw "Executable did not provide build identity: $exe" }
+$stopwatch = [Diagnostics.Stopwatch]::StartNew()
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path (Split-Path $PSScriptRoot -Parent) ("artifacts\agent-playtest\{0}" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
 }
@@ -80,6 +83,7 @@ $classification = "protocol_failure"
 $reason = "unknown"
 try {
     $observation = Read-AgentObservation
+    $baselineState = $observation.state | ConvertTo-Json -Depth 4 | ConvertFrom-Json
     $initialSouls = $observation.state.souls
     if ($Goal -eq "observe") { $classification = "pass"; $reason = "schema_observed" }
     else {
@@ -116,16 +120,36 @@ try {
 
 $files = @(Get-ChildItem -LiteralPath $OutputDirectory -File -Recurse | Sort-Object FullName)
 $hashes = @($files | ForEach-Object { [ordered]@{ path=[IO.Path]::GetRelativePath($OutputDirectory,$_.FullName).Replace('\','/'); bytes=$_.Length; sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() } })
+$runtimeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+$receipt = [ordered]@{
+    schema = "indro.development-transaction/v1"
+    objective = $(if ($Goal -eq "combat-cycle") { "Complete one bounded autonomous combat and soul-capture cycle." } else { "Observe exact autonomous playtest runtime state." })
+    verdict = $(if ($classification -eq "pass") { "PASS" } else { "FAIL" })
+    authority = [ordered]@{ source_revision=[string]$identity.commit; runtime_sha256=$runtimeHash; adapter="data-game.agent-playtest/schema-3" }
+    budgets = [ordered]@{ declared=[ordered]@{ actions=$MaximumActions; simulation_ticks=$MaximumActions*120 }; consumed=[ordered]@{ actions=$actions.Count; simulation_ticks=[long]$observation.state.tick } }
+    observations = [ordered]@{ baseline=$baselineState; final=$observation.state }
+    actions = $actions.ToArray()
+    checks = @(
+        [ordered]@{ id="goal-postcondition"; role="positive"; verdict=$(if($classification-eq"pass"){"PASS"}else{"FAIL"}); observation=$reason },
+        [ordered]@{ id="declared-budgets"; role="regression"; verdict=$(if($actions.Count-le$MaximumActions-and$observation.state.tick-le($MaximumActions*120)){"PASS"}else{"FAIL"}) }
+    )
+    evidence = $hashes
+    limitations = @("The combat-cycle policy proves one kill/capture primitive; it does not claim full-room completion.")
+    elapsed_ms = [Math]::Round($stopwatch.Elapsed.TotalMilliseconds,3)
+}
+$receiptPath = Join-Path $OutputDirectory "development-transaction.json"
+$receipt | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $receiptPath -Encoding utf8NoBOM
 $result = [ordered]@{
     schema = "data-game.agent-playtest/v1"
     classification = $classification
     reason = $reason
     goal = $Goal
-    source = [ordered]@{ executable=$exe; executable_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant(); room_seed=$RoomSeed; room_index=$RoomIndex }
+    source = [ordered]@{ executable=$exe; executable_sha256=$runtimeHash; room_seed=$RoomSeed; room_index=$RoomIndex }
     limits = [ordered]@{ maximum_actions=$MaximumActions; minimum_battery=$MinimumBattery }
     actions = $actions.ToArray()
     final_state = $observation.state
     evidence = $hashes
+    development_receipt = "development-transaction.json"
 }
 $resultPath = Join-Path $OutputDirectory "result.json"
 $result | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $resultPath -Encoding utf8NoBOM
