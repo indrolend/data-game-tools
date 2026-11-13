@@ -45,7 +45,7 @@ result is preferable on a remote client.
 .\Invoke-DataGame.ps1 -Action evidence -Scenario enemy-obstruction
 ```
 
-`shadow-stability` consumes the product-owned room inspector and runtime shadow command/observation interfaces. It captures off, cheap, mapped-normal, and mapped-pretty for all eight representative premises, verifies path isolation, and emits representative contact sheets plus a complete hash manifest. An already verified developer executable may be supplied with `-ExecutablePath` to avoid rebuilding during rapid iteration.
+`shadow-stability` consumes the product-owned room inspector and runtime shadow command/observation interfaces. It captures off, cheap, mapped-normal, and mapped-pretty for all eight representative premises, verifies path isolation (including directional, local-fixture, and unavailable sources), and emits representative contact sheets plus a complete hash manifest. An already verified developer executable may be supplied with `-ExecutablePath` to avoid rebuilding during rapid iteration.
 
 Verify a retained bundle without rerunning the renderer with `scripts/Test-ShadowStabilityEvidence.ps1 -Bundle <path>`; this is the compact CommandHUD/Indro handoff surface.
 

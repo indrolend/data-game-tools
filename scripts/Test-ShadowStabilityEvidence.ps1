@@ -7,6 +7,8 @@ if($manifest.classification-ne'PASS'-or@($manifest.captures|Where-Object{-not$_.
 $hashes=@(Get-Content -LiteralPath (Join-Path $root 'sha256-manifest.json') -Raw|ConvertFrom-Json)
 foreach($item in $hashes){$path=[IO.Path]::GetFullPath((Join-Path $root $item.path));if(-not$path.StartsWith($root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw "Hash path escaped bundle: $($item.path)"};if(-not(Test-Path -LiteralPath $path -PathType Leaf)){throw "Missing evidence: $($item.path)"};$actual=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();if($actual-ne$item.sha256){throw "Hash mismatch: $($item.path)"}}
 $nonDirectional=@($manifest.captures|Where-Object{$_.availability-eq'non-directional-rig'})
+$localFixture=@($manifest.captures|Where-Object{$_.availability-eq'local-fixture'})
 "SHADOW_EVIDENCE_INTEGRITY=PASS files=$($hashes.Count) captures=$($manifest.captures.Count)"
 "SHADOW_LOCAL_LIGHT_GAP=OBSERVED captures=$($nonDirectional.Count) premises=$(@($nonDirectional.premise|Sort-Object -Unique).Count)"
+"SHADOW_LOCAL_FIXTURE_CAPABILITY=OBSERVED captures=$($localFixture.Count) premises=$(@($localFixture.premise|Sort-Object -Unique).Count)"
 "VISUAL_DEFECT_CLOSURE=PASS premises=$($result.premises) modes=$($result.modes) failures=$($result.failures)"
