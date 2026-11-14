@@ -58,7 +58,7 @@ Visual capture and richer evidence bundles should be added here as thin orchestr
 
 ## Bounded autonomous playtest
 
-`scripts/Invoke-AgentPlaytest.ps1` drives the product-owned schema-3 agent
+`scripts/Invoke-AgentPlaytest.ps1` drives the product-owned schema-4 agent
 protocol without copying simulation rules. Its `combat-cycle` goal adaptively
 orients, approaches, attacks, and captures one soul while enforcing action and
 battery budgets. Every observation frame, command, state transition, executable
@@ -68,6 +68,12 @@ Use `-Goal room-clear` to compose that primitive with objective aiming and soul
 deposits until the room's authoritative `clear` postcondition is observed. Keep
 an explicit action budget; fixture success is evidence for that room, not a
 claim that every generated premise is navigable by the same policy.
+
+The runner fails closed on malformed or incomplete records, schema/tick
+disagreement, protocol errors, non-finite state, silent identity probes or
+observations, and existing evidence directories. It drains and retains child
+stderr so a noisy product cannot deadlock the evidence transaction. Run the
+isolated executable-fixture regression funnel with `./Dev.ps1 agent-test`.
 
 ```powershell
 .\scripts\Invoke-AgentPlaytest.ps1 `

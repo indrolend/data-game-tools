@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("help", "status", "projects", "project", "git", "worktrees", "tests", "build", "godot-build", "godot-test", "evidence", "agent-playtest", "agents", "doctor")]
+    [ValidateSet("help", "status", "projects", "project", "git", "worktrees", "tests", "build", "godot-build", "godot-test", "evidence", "agent-playtest", "agent-test", "agents", "doctor")]
     [string]$Action = "help",
 
     [Parameter(Position = 1)]
@@ -119,6 +119,7 @@ dev tests                  build and run product tests
 dev build                  build the product
 dev evidence               build and capture deterministic evidence
 dev agent-playtest         run one bounded autonomous combat/capture cycle
+dev agent-test             run isolated agent protocol fault and regression tests
 dev godot-build            build the native-authoritative Godot client
 dev godot-test             build, import, and run all Godot contracts
 dev agents                 available trusted agent runners
@@ -153,6 +154,7 @@ Options: -Configuration Release -Scenario enemy-obstruction -Json
         & (Join-Path $toolRoot "scripts\Invoke-AgentPlaytest.ps1") -ExecutablePath $ExecutablePath
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
+    "agent-test" { & (Join-Path $toolRoot "tests\Test-AgentPlaytest.ps1"); if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
     "agents" { & commandhud agents $(if ($Json) { "--json" }) }
     "doctor" { Write-Doctor }
 }

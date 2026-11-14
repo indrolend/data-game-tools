@@ -3,16 +3,31 @@ param(
     [Parameter(Mandatory = $true)][string]$ExecutablePath,
     [string]$OutputDirectory,
     [int]$RoomSeed = 7,
-    [int]$RoomIndex = 12,
+    [ValidateRange(1, [int]::MaxValue)][int]$RoomIndex = 12,
     [ValidateSet("observe", "combat-cycle", "room-clear")][string]$Goal = "combat-cycle",
-    [int]$MaximumActions = 40,
-    [double]$MinimumBattery = 12.0
+    [ValidateRange(1, 10000)][int]$MaximumActions = 40,
+    [ValidateRange(0.0, 100.0)][double]$MinimumBattery = 12.0,
+    [ValidateRange(1, 300)][int]$ObservationTimeoutSeconds = 15
 )
 
 $ErrorActionPreference = "Stop"
 $exe = (Resolve-Path -LiteralPath $ExecutablePath).Path
-$identity = (& $exe --build-identity-json | Out-String | ConvertFrom-Json)
-if ($LASTEXITCODE -ne 0 -or -not $identity.commit) { throw "Executable did not provide build identity: $exe" }
+function Get-ExecutableIdentity {
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $exe; $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+    [void]$info.ArgumentList.Add('--build-identity-json')
+    $probe = [Diagnostics.Process]::new(); $probe.StartInfo = $info
+    if (-not $probe.Start()) { throw "Failed to launch identity probe: $exe" }
+    $stdout = $probe.StandardOutput.ReadToEndAsync(); $stderr = $probe.StandardError.ReadToEndAsync()
+    if (-not $probe.WaitForExit($ObservationTimeoutSeconds * 1000)) { $probe.Kill($true); throw "Executable identity probe timed out after $ObservationTimeoutSeconds seconds." }
+    $text = $stdout.GetAwaiter().GetResult(); $errorText = $stderr.GetAwaiter().GetResult()
+    if ($probe.ExitCode -ne 0) { throw "Executable identity probe failed with exit $($probe.ExitCode): $errorText" }
+    try { $value = $text | ConvertFrom-Json } catch { throw "Executable returned malformed build identity JSON: $($_.Exception.Message)" }
+    if (-not $value.commit -or $value.commit -notmatch '^[0-9a-fA-F]{40}$') { throw "Executable did not provide a 40-hex commit identity: $exe" }
+    $value
+}
+$identity = Get-ExecutableIdentity
 $stopwatch = [Diagnostics.Stopwatch]::StartNew()
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path (Split-Path $PSScriptRoot -Parent) ("artifacts\agent-playtest\{0}" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
@@ -28,6 +43,7 @@ $start.FileName = $exe
 $start.UseShellExecute = $false
 $start.RedirectStandardInput = $true
 $start.RedirectStandardOutput = $true
+$start.RedirectStandardError = $true
 $start.CreateNoWindow = $true
 foreach ($argument in @(
     "--agent-playtest", "--agent-frame", $frame,
@@ -40,42 +56,65 @@ foreach ($argument in @(
 $process = [Diagnostics.Process]::new()
 $process.StartInfo = $start
 if (-not $process.Start()) { throw "Failed to launch $exe" }
+$stderrTask = $process.StandardError.ReadToEndAsync()
 
 function Convert-AgentState([string]$line) {
     if ($line -notmatch '^AGENT_STATE schema=(\d+) tick=(\d+) .* room=(\d+) pos=([^,]+),([^,]+),([^ ]+) .* yaw=([^ ]+) pitch=([^ ]+) battery=([^ ]+) souls=(\d+) active_enemies=(\d+) exposed_souls=(\d+) goals=(\d+)/(\d+) clear=(\d+) dead=(\d+)') { return $null }
-    [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; room=[int]$Matches[3]; x=[double]$Matches[4]; y=[double]$Matches[5]; z=[double]$Matches[6]; yaw=[double]$Matches[7]; pitch=[double]$Matches[8]; battery=[double]$Matches[9]; souls=[int]$Matches[10]; active_enemies=[int]$Matches[11]; exposed_souls=[int]$Matches[12]; deposited=[int]$Matches[13]; required=[int]$Matches[14]; clear=[bool][int]$Matches[15]; dead=[bool][int]$Matches[16] }
+    $value = [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; room=[int]$Matches[3]; x=[double]$Matches[4]; y=[double]$Matches[5]; z=[double]$Matches[6]; yaw=[double]$Matches[7]; pitch=[double]$Matches[8]; battery=[double]$Matches[9]; souls=[int]$Matches[10]; active_enemies=[int]$Matches[11]; exposed_souls=[int]$Matches[12]; deposited=[int]$Matches[13]; required=[int]$Matches[14]; clear=[bool][int]$Matches[15]; dead=[bool][int]$Matches[16] }
+    foreach ($field in @('x','y','z','yaw','pitch','battery')) { if (-not [double]::IsFinite($value[$field])) { return $null } }
+    $value
 }
 
 function Convert-AgentEnemy([string]$line) {
     if ($line -match '^AGENT_ENEMY schema=\d+ tick=\d+ valid=0') { return $null }
-    if ($line -notmatch '^AGENT_ENEMY schema=\d+ tick=\d+ valid=1 id=(\d+) distance_m=([^ ]+) armor=([^ ]+) pos_m=([^,]+),([^,]+),([^ ]+)') { return $null }
-    [ordered]@{ id=[int]$Matches[1]; distance=[double]$Matches[2]; armor=[double]$Matches[3]; x=[double]$Matches[4]; y=[double]$Matches[5]; z=[double]$Matches[6] }
+    if ($line -notmatch '^AGENT_ENEMY schema=(\d+) tick=(\d+) valid=1 id=(\d+) distance_m=([^ ]+) armor=([^ ]+) pos_m=([^,]+),([^,]+),([^ ]+)') { return $null }
+    [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; id=[int]$Matches[3]; distance=[double]$Matches[4]; armor=[double]$Matches[5]; x=[double]$Matches[6]; y=[double]$Matches[7]; z=[double]$Matches[8] }
 }
 
 function Convert-AgentObjective([string]$line) {
     if ($line -match '^AGENT_OBJECTIVE schema=\d+ tick=\d+ valid=0') { return $null }
-    if ($line -notmatch '^AGENT_OBJECTIVE schema=\d+ tick=\d+ valid=1 id=(\d+) pos_m=([^,]+),([^,]+),([^ ]+) distance_m=([^ ]+)') { return $null }
-    [ordered]@{ id=[int]$Matches[1]; x=[double]$Matches[2]; y=[double]$Matches[3]; z=[double]$Matches[4]; distance=[double]$Matches[5] }
+    if ($line -notmatch '^AGENT_OBJECTIVE schema=(\d+) tick=(\d+) valid=1 id=(\d+) pos_m=([^,]+),([^,]+),([^ ]+) distance_m=([^ ]+)') { return $null }
+    [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; id=[int]$Matches[3]; x=[double]$Matches[4]; y=[double]$Matches[5]; z=[double]$Matches[6]; distance=[double]$Matches[7] }
 }
 
 function Convert-AgentSoul([string]$line) {
     if ($line -match '^AGENT_SOUL schema=\d+ tick=\d+ valid=0') { return $null }
-    if ($line -notmatch '^AGENT_SOUL schema=\d+ tick=\d+ valid=1 id=(\d+) pos_m=([^,]+),([^,]+),([^ ]+) distance_m=([^ ]+)') { return $null }
-    [ordered]@{ id=[int]$Matches[1]; x=[double]$Matches[2]; y=[double]$Matches[3]; z=[double]$Matches[4]; distance=[double]$Matches[5] }
+    if ($line -notmatch '^AGENT_SOUL schema=(\d+) tick=(\d+) valid=1 id=(\d+) pos_m=([^,]+),([^,]+),([^ ]+) distance_m=([^ ]+)') { return $null }
+    [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; id=[int]$Matches[3]; x=[double]$Matches[4]; y=[double]$Matches[5]; z=[double]$Matches[6]; distance=[double]$Matches[7] }
+}
+
+function Read-AgentLine {
+    $pending = $process.StandardOutput.ReadLineAsync()
+    if (-not $pending.Wait([TimeSpan]::FromSeconds($ObservationTimeoutSeconds))) {
+        throw "Agent observation timed out after $ObservationTimeoutSeconds seconds."
+    }
+    $pending.Result
 }
 
 function Read-AgentObservation {
     $observation = [ordered]@{ state=$null; enemy=$null; objective=$null; soul=$null }
+    $seen = [ordered]@{ state=$false; objective=$false; soul=$false; enemy=$false }
+    $envelopes = [Collections.Generic.List[object]]::new()
     while ($true) {
-        $line = $process.StandardOutput.ReadLine()
+        $line = Read-AgentLine
         if ($null -eq $line) { throw "Agent process ended before an observation completed." }
         $transcript.WriteLine($line); $transcript.Flush()
-        if ($line.StartsWith("AGENT_STATE ")) { $observation.state = Convert-AgentState $line }
-        elseif ($line.StartsWith("AGENT_OBJECTIVE ")) { $observation.objective = Convert-AgentObjective $line }
-        elseif ($line.StartsWith("AGENT_SOUL ")) { $observation.soul = Convert-AgentSoul $line }
-        elseif ($line.StartsWith("AGENT_ENEMY ")) { $observation.enemy = Convert-AgentEnemy $line; break }
+        if ($line.StartsWith("AGENT_PLAYTEST_ERROR ")) { throw "Agent protocol reported: $line" }
+        if ($line -match '^AGENT_(?:OBJECTIVE|SOUL|ENEMY) schema=(\d+) tick=(\d+)') {
+            $envelopes.Add([ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2] })
+        }
+        if ($line.StartsWith("AGENT_STATE ")) { $seen.state=$true; $observation.state = Convert-AgentState $line }
+        elseif ($line.StartsWith("AGENT_OBJECTIVE ")) { $seen.objective=$true; $observation.objective = Convert-AgentObjective $line }
+        elseif ($line.StartsWith("AGENT_SOUL ")) { $seen.soul=$true; $observation.soul = Convert-AgentSoul $line }
+        elseif ($line.StartsWith("AGENT_ENEMY ")) { $seen.enemy=$true; $observation.enemy = Convert-AgentEnemy $line; break }
     }
     if (-not $observation.state -or $observation.state.schema -lt 4) { throw "Agent schema 4 or newer is required." }
+    if ($seen.Values -contains $false) { throw "Agent observation omitted a required schema-4 record." }
+    foreach ($record in $envelopes) {
+        if ($record.schema -ne $observation.state.schema -or $record.tick -ne $observation.state.tick) {
+            throw "Agent observation records disagree on schema or tick."
+        }
+    }
     $observation
 }
 
@@ -157,6 +196,10 @@ try {
 } finally {
     if (-not $process.HasExited) { $process.StandardInput.WriteLine("quit"); $process.StandardInput.Flush(); $process.WaitForExit(5000) | Out-Null }
     if (-not $process.HasExited) { $process.Kill($true) }
+    try {
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        if ($stderr) { $transcript.WriteLine("STDERR"); $transcript.Write($stderr) }
+    } catch { $transcript.WriteLine("STDERR_READ_ERROR $($_.Exception.Message)") }
     $transcript.Dispose()
 }
 
