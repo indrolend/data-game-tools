@@ -64,6 +64,11 @@ orients, approaches, attacks, and captures one soul while enforcing action and
 battery budgets. Every observation frame, command, state transition, executable
 hash, and final verdict is retained in a unique ignored evidence bundle.
 
+Use `-Goal room-clear` to compose that primitive with objective aiming and soul
+deposits until the room's authoritative `clear` postcondition is observed. Keep
+an explicit action budget; fixture success is evidence for that room, not a
+claim that every generated premise is navigable by the same policy.
+
 ```powershell
 .\scripts\Invoke-AgentPlaytest.ps1 `
   -ExecutablePath C:\path\to\DigitalBreakdown.exe `
