@@ -4,7 +4,7 @@ param(
     [string]$OutputDirectory,
     [int]$RoomSeed = 7,
     [int]$RoomIndex = 12,
-    [ValidateSet("observe", "combat-cycle")][string]$Goal = "combat-cycle",
+    [ValidateSet("observe", "combat-cycle", "room-clear")][string]$Goal = "combat-cycle",
     [int]$MaximumActions = 40,
     [double]$MinimumBattery = 12.0
 )
@@ -52,17 +52,30 @@ function Convert-AgentEnemy([string]$line) {
     [ordered]@{ id=[int]$Matches[1]; distance=[double]$Matches[2]; armor=[double]$Matches[3]; x=[double]$Matches[4]; y=[double]$Matches[5]; z=[double]$Matches[6] }
 }
 
+function Convert-AgentObjective([string]$line) {
+    if ($line -match '^AGENT_OBJECTIVE schema=\d+ tick=\d+ valid=0') { return $null }
+    if ($line -notmatch '^AGENT_OBJECTIVE schema=\d+ tick=\d+ valid=1 id=(\d+) pos_m=([^,]+),([^,]+),([^ ]+) distance_m=([^ ]+)') { return $null }
+    [ordered]@{ id=[int]$Matches[1]; x=[double]$Matches[2]; y=[double]$Matches[3]; z=[double]$Matches[4]; distance=[double]$Matches[5] }
+}
+
+function Convert-AgentSoul([string]$line) {
+    if ($line -match '^AGENT_SOUL schema=\d+ tick=\d+ valid=0') { return $null }
+    if ($line -notmatch '^AGENT_SOUL schema=\d+ tick=\d+ valid=1 id=(\d+) pos_m=([^,]+),([^,]+),([^ ]+) distance_m=([^ ]+)') { return $null }
+    [ordered]@{ id=[int]$Matches[1]; x=[double]$Matches[2]; y=[double]$Matches[3]; z=[double]$Matches[4]; distance=[double]$Matches[5] }
+}
+
 function Read-AgentObservation {
-    $observation = [ordered]@{ state=$null; enemy=$null; objective=$null }
+    $observation = [ordered]@{ state=$null; enemy=$null; objective=$null; soul=$null }
     while ($true) {
         $line = $process.StandardOutput.ReadLine()
         if ($null -eq $line) { throw "Agent process ended before an observation completed." }
         $transcript.WriteLine($line); $transcript.Flush()
         if ($line.StartsWith("AGENT_STATE ")) { $observation.state = Convert-AgentState $line }
-        elseif ($line.StartsWith("AGENT_OBJECTIVE ")) { $observation.objective = $line }
+        elseif ($line.StartsWith("AGENT_OBJECTIVE ")) { $observation.objective = Convert-AgentObjective $line }
+        elseif ($line.StartsWith("AGENT_SOUL ")) { $observation.soul = Convert-AgentSoul $line }
         elseif ($line.StartsWith("AGENT_ENEMY ")) { $observation.enemy = Convert-AgentEnemy $line; break }
     }
-    if (-not $observation.state -or $observation.state.schema -lt 3) { throw "Agent schema 3 or newer is required." }
+    if (-not $observation.state -or $observation.state.schema -lt 4) { throw "Agent schema 4 or newer is required." }
     $observation
 }
 
@@ -90,9 +103,38 @@ try {
         for ($action = 0; $action -lt $MaximumActions; ++$action) {
             $state = $observation.state
             if ($state.dead) { $classification = "fail"; $reason = "player_dead"; break }
-            if ($state.souls -gt $initialSouls) { $classification = "pass"; $reason = "combat_cycle_completed"; break }
+            if ($Goal -eq "combat-cycle" -and $state.souls -gt $initialSouls) { $classification = "pass"; $reason = "combat_cycle_completed"; break }
+            if ($Goal -eq "room-clear" -and $state.clear) { $classification = "pass"; $reason = "room_cleared"; break }
             if ($state.battery -lt $MinimumBattery) { $classification = "fail"; $reason = "battery_safety_floor"; break }
-            if ($state.exposed_souls -gt 0) { $command = "step frames=120 vacuum=1" }
+            if ($Goal -eq "room-clear" -and $state.souls -gt 0) {
+                if (-not $observation.objective) { $classification = "fail"; $reason = "no_actionable_objective"; break }
+                $objective = $observation.objective
+                $dx = $objective.x - $state.x; $dy = $objective.y - ($state.y + 0.95); $dz = $objective.z - $state.z
+                $desiredYaw = [Math]::Atan2(-$dx, -$dz)
+                $yawDelta = Normalize-Angle ($desiredYaw - $state.yaw)
+                $desiredPitch = [Math]::Atan2($dy, [Math]::Sqrt($dx*$dx + $dz*$dz))
+                $pitchDelta = $desiredPitch - $state.pitch
+                if ([Math]::Abs($yawDelta) -gt 0.035) {
+                    $look = [Math]::Max(-400.0, [Math]::Min(400.0, -$yawDelta / 0.003))
+                    $command = "step frames=1 lookX=$($look.ToString('0.###',[Globalization.CultureInfo]::InvariantCulture))"
+                } elseif ([Math]::Abs($pitchDelta) -gt 0.025) {
+                    $look = [Math]::Max(-400.0, [Math]::Min(400.0, -$pitchDelta / 0.003))
+                    $command = "step frames=1 lookY=$($look.ToString('0.###',[Globalization.CultureInfo]::InvariantCulture))"
+                } else { $command = "step frames=90 shoot=1" }
+            }
+            elseif ($state.exposed_souls -gt 0) {
+                if (-not $observation.soul) { $classification = "fail"; $reason = "no_actionable_soul"; break }
+                $soul = $observation.soul
+                $desiredYaw = [Math]::Atan2(-($soul.x - $state.x), -($soul.z - $state.z))
+                $delta = Normalize-Angle ($desiredYaw - $state.yaw)
+                if ([Math]::Abs($delta) -gt 0.12) {
+                    $look = [Math]::Max(-400.0, [Math]::Min(400.0, -$delta / 0.003))
+                    $command = "step frames=1 lookX=$($look.ToString('0.###',[Globalization.CultureInfo]::InvariantCulture))"
+                } elseif ($soul.distance -gt 1.65) {
+                    $frames = [Math]::Max(1, [Math]::Min(60, [int](($soul.distance - 1.25) / 4.0 * 60.0)))
+                    $command = "step frames=$frames moveZ=1"
+                } else { $command = "step frames=90 vacuum=1" }
+            }
             elseif (-not $observation.enemy) { $classification = "fail"; $reason = "no_actionable_enemy"; break }
             else {
                 $enemy = $observation.enemy
@@ -104,7 +146,7 @@ try {
                 } elseif ($enemy.distance -gt 2.55) {
                     $frames = [Math]::Max(1, [Math]::Min(90, [int](($enemy.distance - 2.15) / 5.0 * 60.0)))
                     $command = "step frames=$frames moveZ=1 sprint=1"
-                } else { $command = "step frames=30 melee=1" }
+                } else { $command = "step frames=18 melee=1" }
             }
             $before = $state.tick
             $observation = Send-AgentCommand $command
@@ -123,9 +165,9 @@ $hashes = @($files | ForEach-Object { [ordered]@{ path=[IO.Path]::GetRelativePat
 $runtimeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
 $receipt = [ordered]@{
     schema = "indro.development-transaction/v1"
-    objective = $(if ($Goal -eq "combat-cycle") { "Complete one bounded autonomous combat and soul-capture cycle." } else { "Observe exact autonomous playtest runtime state." })
+    objective = $(if ($Goal -eq "combat-cycle") { "Complete one bounded autonomous combat and soul-capture cycle." } elseif ($Goal -eq "room-clear") { "Clear one room through bounded autonomous combat, soul capture, and objective deposits." } else { "Observe exact autonomous playtest runtime state." })
     verdict = $(if ($classification -eq "pass") { "PASS" } else { "FAIL" })
-    authority = [ordered]@{ source_revision=[string]$identity.commit; runtime_sha256=$runtimeHash; adapter="data-game.agent-playtest/schema-3" }
+    authority = [ordered]@{ source_revision=[string]$identity.commit; runtime_sha256=$runtimeHash; adapter="data-game.agent-playtest/schema-4" }
     budgets = [ordered]@{ declared=[ordered]@{ actions=$MaximumActions; simulation_ticks=$MaximumActions*120 }; consumed=[ordered]@{ actions=$actions.Count; simulation_ticks=[long]$observation.state.tick } }
     observations = [ordered]@{ baseline=$baselineState; final=$observation.state }
     actions = $actions.ToArray()
@@ -134,7 +176,7 @@ $receipt = [ordered]@{
         [ordered]@{ id="declared-budgets"; role="regression"; verdict=$(if($actions.Count-le$MaximumActions-and$observation.state.tick-le($MaximumActions*120)){"PASS"}else{"FAIL"}) }
     )
     evidence = $hashes
-    limitations = @("The combat-cycle policy proves one kill/capture primitive; it does not claim full-room completion.")
+    limitations = @($(if ($Goal -eq "room-clear") { "The room-clear policy proves one deterministic room fixture; it does not claim navigation across every generated premise." } else { "The combat-cycle policy proves one kill/capture primitive; it does not claim full-room completion." }))
     elapsed_ms = [Math]::Round($stopwatch.Elapsed.TotalMilliseconds,3)
 }
 $receiptPath = Join-Path $OutputDirectory "development-transaction.json"
