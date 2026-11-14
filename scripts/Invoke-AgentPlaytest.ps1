@@ -67,20 +67,26 @@ function Convert-AgentState([string]$line) {
 
 function Convert-AgentEnemy([string]$line) {
     if ($line -match '^AGENT_ENEMY schema=\d+ tick=\d+ valid=0') { return $null }
-    if ($line -notmatch '^AGENT_ENEMY schema=(\d+) tick=(\d+) valid=1 id=(\d+) distance_m=([^ ]+) armor=([^ ]+) pos_m=([^,]+),([^,]+),([^ ]+)') { return $null }
-    [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; id=[int]$Matches[3]; distance=[double]$Matches[4]; armor=[double]$Matches[5]; x=[double]$Matches[6]; y=[double]$Matches[7]; z=[double]$Matches[8] }
+    if ($line -notmatch '^AGENT_ENEMY schema=(\d+) tick=(\d+) valid=1 id=(\d+) distance_m=([^ ]+) armor=([^ ]+) pos_m=([^,]+),([^,]+),([^ ]+)') { throw 'Malformed valid AGENT_ENEMY record.' }
+    $value = [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; id=[int]$Matches[3]; distance=[double]$Matches[4]; armor=[double]$Matches[5]; x=[double]$Matches[6]; y=[double]$Matches[7]; z=[double]$Matches[8] }
+    foreach ($field in @('distance','armor','x','y','z')) { if (-not [double]::IsFinite($value[$field])) { throw "Non-finite AGENT_ENEMY field: $field" } }
+    $value
 }
 
 function Convert-AgentObjective([string]$line) {
     if ($line -match '^AGENT_OBJECTIVE schema=\d+ tick=\d+ valid=0') { return $null }
-    if ($line -notmatch '^AGENT_OBJECTIVE schema=(\d+) tick=(\d+) valid=1 id=(\d+) pos_m=([^,]+),([^,]+),([^ ]+) distance_m=([^ ]+)') { return $null }
-    [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; id=[int]$Matches[3]; x=[double]$Matches[4]; y=[double]$Matches[5]; z=[double]$Matches[6]; distance=[double]$Matches[7] }
+    if ($line -notmatch '^AGENT_OBJECTIVE schema=(\d+) tick=(\d+) valid=1 id=(\d+) pos_m=([^,]+),([^,]+),([^ ]+) distance_m=([^ ]+)') { throw 'Malformed valid AGENT_OBJECTIVE record.' }
+    $value = [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; id=[int]$Matches[3]; x=[double]$Matches[4]; y=[double]$Matches[5]; z=[double]$Matches[6]; distance=[double]$Matches[7] }
+    foreach ($field in @('x','y','z','distance')) { if (-not [double]::IsFinite($value[$field])) { throw "Non-finite AGENT_OBJECTIVE field: $field" } }
+    $value
 }
 
 function Convert-AgentSoul([string]$line) {
     if ($line -match '^AGENT_SOUL schema=\d+ tick=\d+ valid=0') { return $null }
-    if ($line -notmatch '^AGENT_SOUL schema=(\d+) tick=(\d+) valid=1 id=(\d+) pos_m=([^,]+),([^,]+),([^ ]+) distance_m=([^ ]+)') { return $null }
-    [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; id=[int]$Matches[3]; x=[double]$Matches[4]; y=[double]$Matches[5]; z=[double]$Matches[6]; distance=[double]$Matches[7] }
+    if ($line -notmatch '^AGENT_SOUL schema=(\d+) tick=(\d+) valid=1 id=(\d+) pos_m=([^,]+),([^,]+),([^ ]+) distance_m=([^ ]+)') { throw 'Malformed valid AGENT_SOUL record.' }
+    $value = [ordered]@{ schema=[int]$Matches[1]; tick=[long]$Matches[2]; id=[int]$Matches[3]; x=[double]$Matches[4]; y=[double]$Matches[5]; z=[double]$Matches[6]; distance=[double]$Matches[7] }
+    foreach ($field in @('x','y','z','distance')) { if (-not [double]::IsFinite($value[$field])) { throw "Non-finite AGENT_SOUL field: $field" } }
+    $value
 }
 
 function Read-AgentLine {
@@ -193,6 +199,15 @@ try {
         }
         if ($classification -eq "protocol_failure") { $classification = "fail"; $reason = "action_budget_exhausted" }
     }
+} catch {
+    $fault = [ordered]@{
+        schema='data-game.agent-playtest-fault/v1'; goal=$Goal; error_type=$_.Exception.GetType().FullName; error=$_.Exception.Message
+        source=[ordered]@{ executable=$exe; executable_sha256=(Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant(); build_commit=[string]$identity.commit }
+        limits=[ordered]@{ maximum_actions=$MaximumActions; minimum_battery=$MinimumBattery; observation_timeout_seconds=$ObservationTimeoutSeconds }
+        transcript='transcript.log'; recorded_at_utc=[DateTime]::UtcNow.ToString('o')
+    }
+    $fault | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'fault.json') -Encoding utf8NoBOM
+    throw
 } finally {
     if (-not $process.HasExited) { $process.StandardInput.WriteLine("quit"); $process.StandardInput.Flush(); $process.WaitForExit(5000) | Out-Null }
     if (-not $process.HasExited) { $process.Kill($true) }

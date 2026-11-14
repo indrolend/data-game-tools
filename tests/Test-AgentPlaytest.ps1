@@ -30,11 +30,14 @@ try {
         @{ mode='missing-soul'; pattern='omitted a required' },
         @{ mode='tick-mismatch'; pattern='disagree on schema or tick' },
         @{ mode='protocol-error'; pattern='fixture_failure' },
-        @{ mode='nan-state'; pattern='schema 4 or newer' }
+        @{ mode='nan-state'; pattern='schema 4 or newer' },
+        @{ mode='nan-soul'; pattern='Non-finite AGENT_SOUL' },
+        @{ mode='malformed-objective'; pattern='Malformed valid AGENT_OBJECTIVE' }
     )) {
         $failure = Invoke-Fixture $case.mode
         if ($failure.exit_code -eq 0) { throw "$($case.mode) unexpectedly passed" }
         if ($failure.output -notmatch $case.pattern) { throw "$($case.mode) missing expected fault: $($failure.output)" }
+        if (-not (Test-Path -LiteralPath (Join-Path $failure.directory 'fault.json'))) { throw "$($case.mode) did not retain fault.json" }
     }
 
     $silent = Invoke-Fixture silent observe 1
@@ -49,7 +52,7 @@ try {
     $existing = Invoke-Fixture valid
     if ($existing.exit_code -eq 0 -or $existing.output -notmatch 'already exists') { throw 'existing evidence directory was overwritten' }
 
-    Write-Output "AGENT_PLAYTEST_FAULT_TEST_OK cases=10"
+    Write-Output "AGENT_PLAYTEST_FAULT_TEST_OK cases=12"
 } finally {
     Remove-Item Env:DB_AGENT_FIXTURE_MODE -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $temporary -Recurse -Force -ErrorAction SilentlyContinue

@@ -72,8 +72,9 @@ claim that every generated premise is navigable by the same policy.
 The runner fails closed on malformed or incomplete records, schema/tick
 disagreement, protocol errors, non-finite state, silent identity probes or
 observations, and existing evidence directories. It drains and retains child
-stderr so a noisy product cannot deadlock the evidence transaction. Run the
-isolated executable-fixture regression funnel with `./Dev.ps1 agent-test`.
+stderr so a noisy product cannot deadlock the evidence transaction. Protocol
+faults retain a compact `fault.json` beside the transcript. Run the isolated
+executable-fixture regression funnel with `./Dev.ps1 agent-test`.
 
 ```powershell
 .\scripts\Invoke-AgentPlaytest.ps1 `
